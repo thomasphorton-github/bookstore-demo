@@ -1,0 +1,51 @@
+name: Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  clean:
+    name: Cleanup Review apps
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Mark deployments as destroyed
+      uses: actions/github-script@0.8.0
+      with:
+        github-token: ${{secrets.GITHUB_TOKEN}}
+        script: |
+          console.log(context.payload.pull_request.head.ref)
+          github.repos.listDeployments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            ref: context.payload.pull_request.head.ref
+          }).then(deployments => {
+            for (const deployment of deployments.data) {
+              github.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                mediaType: {
+                  previews: ["flash-preview", "ant-man"]
+                },
+                deployment_id: deployment.id,
+                state: 'inactive',
+                description: 'Destroyed after Pull Request merge'
+              })
+            }
+          })
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Delete the review apps
+      env:
+        RESOURCE_GROUP: bookstore
+        QUERY: ${{ format('[?tags.ref==''refs/heads/{0}''&&tags.type==''{1}'']', github.head_ref, 'review') }}
+      run: |
+        az webapp list --resource-group $RESOURCE_GROUP --query "$QUERY" > webapplist.json
+        WEBAPP_ID_LIST=$(jq -j '.[].id+" "' webapplist.json) 
+        echo "::debug::About to delete the following Azure Webapps : $WEBAPP_ID_LIST"
+        if [ ${#WEBAPP_ID_LIST[@]} -ne 0 ]; then az webapp delete --ids $WEBAPP_ID_LIST --keep-empty-plan; fi

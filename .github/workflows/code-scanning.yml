@@ -1,0 +1,32 @@
+name: Code scanning
+
+on:
+  push:
+    branches-ignore:    
+    - new_demo
+
+jobs:
+  build:
+    # The name below is the base of a required context for deployment. The generated value (i.e. `Build (ubuntu-18.04, 1.8)`) should match what's in `.github/deploy.yml` on `master`
+    name: Build
+    runs-on: ubuntu-18.04
+    
+    steps:
+    
+    - name: Set up JDK 
+      uses: actions/setup-java@v1
+      with:
+        java-version: 1.7
+    
+    - name: Checkout
+      uses: actions/checkout@v1    
+    
+    - uses: Anthophila/codeql-action/codeql/init@master
+      with:
+        languages: java
+    
+    - name: Test and Package
+      run: mvn package war:war
+    
+    - uses: Anthophila/codeql-action/codeql/finish@master
+    

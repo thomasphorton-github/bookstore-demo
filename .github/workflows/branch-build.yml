@@ -1,0 +1,61 @@
+name: Build, Test and Publish
+
+on:
+  push:
+    branches-ignore:
+    - master
+    - new_demo
+
+jobs:
+  build:
+    # The name below is the base of a required context for deployment. The generated value (i.e. `Build (ubuntu-18.04, 1.8)`) should match what's in `.github/deploy.yml` on `master`
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ['ubuntu-18.04', 'macOS-10.14']
+        java: [ '1.8' ]
+
+    steps:
+    - name: Remove dashes from repo name
+      id: package-name
+      run: |
+        export PACKAGE_NAME=$(echo $GITHUB_REPOSITORY | sed 's/-//g' | cut -d/ -f2)
+        echo "::set-output name=package_name::$PACKAGE_NAME"
+    - name: Set up JDK ${{ matrix.java }}
+      uses: actions/setup-java@v1
+      with:
+        java-version: ${{ matrix.java }}
+    - name: Checkout
+      uses: actions/checkout@v1
+
+    # Caching for Maven!
+    - name: Cache maven packages
+      uses: actions/cache@v1
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-mvn-java-${{ matrix.java }}-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          mvn-${{ runner.os}}-${{ matrix.java }}
+    - name: Test and Package
+      run: mvn package war:war
+    - name: Save artifacts
+      uses: actions/upload-artifact@v1
+      with:
+        name: '${{matrix.os}}-${{matrix.java}}-${{github.sha}}.WAR'
+        path: .
+    - name: Build the Docker image
+      if: matrix.os == 'ubuntu-18.04'
+      run: docker build . --file Dockerfile --tag docker.pkg.github.com/$GITHUB_REPOSITORY/$PACKAGE_NAME:$GITHUB_SHA
+      env:
+        PACKAGE_NAME: ${{steps.package-name.outputs.package_name }}
+    - name: Publish to GitHub Package Registry
+      if: matrix.os == 'ubuntu-18.04'
+      env:
+        DOCKER_TOKEN: ${{secrets.GPR_TOKEN}}
+        DOCKER_USER: <token>
+        PACKAGE_NAME: ${{steps.package-name.outputs.package_name }}
+      run: |
+        docker login docker.pkg.github.com -u $DOCKER_USER -p $DOCKER_TOKEN
+        docker push docker.pkg.github.com/$GITHUB_REPOSITORY/$PACKAGE_NAME:$GITHUB_SHA

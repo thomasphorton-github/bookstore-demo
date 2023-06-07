@@ -1,0 +1,10 @@
+target
+tomcat.*
+scripts/.env
+
+# IntelliJ Idea project files
+.idea
+*.iml
+.settings
+.classpath
+.project

@@ -1,0 +1,9 @@
+### Dev files 
+.github/workflows/build.yml           @octodemo/bookstore-java
+.github/workflows/pr-deploy.yml       @octodemo/bookstore-java
+src                                   @octodemo/bookstore-java
+
+### Production sensitive files
+.github/workflows/master-deploy.yml   @octodemo/bookstore-devops
+.github/workflows/scripts             @octodemo/bookstore-devops
+

@@ -1,0 +1,86 @@
+name: Deploy a review app on Azure
+
+on:
+  deployment
+
+jobs:
+
+  deploy:
+    name: Deploy
+    if: github.event.deployment.environment == 'test' || github.event.deployment.environment == 'qa'
+    env:
+      WEBAPP_NAME: ${{ github.event.repository.name }}-${{ github.event.deployment.environment }}-${{ github.event.deployment.id }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - id: package-name
+      run: |
+        export PACKAGE_NAME=$(echo $GITHUB_REPOSITORY | sed 's/-//g' | cut -d/ -f2)
+        echo "::set-output name=package_name::$PACKAGE_NAME"
+    - name: Mark deployment in progress
+      uses: actions/github-script@0.8.0
+      with:
+        github-token: ${{secrets.GITHUB_TOKEN}}
+        script: |
+          let run = process.env.GITHUB_RUN_ID
+          let log_url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run}`
+          github.repos.createDeploymentStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            mediaType: {
+              previews: ["flash-preview", "ant-man"]
+            },
+            deployment_id: context.payload.deployment.id,
+            state: 'in_progress',
+            description: 'Deployment from GitHub Actions started', 
+            target_url: log_url,
+            log_url: log_url
+          })
+    - name: Checking out the code
+      uses: actions/checkout@v1
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Create the review app
+      env:
+        RESOURCE_GROUP: bookstore
+        APP_SERVICE_PLAN: bookstore-app-service-plan
+        DOCKER_USERNAME: <token>
+        DOCKER_PASSWORD: ${{secrets.GPR_TOKEN}}
+        DOCKER_REGISTRY_URL: docker.pkg.github.com
+        PACKAGE_NAME: ${{steps.package-name.outputs.package_name }}
+      run: |
+        az webapp create --resource-group $RESOURCE_GROUP --plan $APP_SERVICE_PLAN --name $WEBAPP_NAME --deployment-container-image-name docker.pkg.github.com/$GITHUB_REPOSITORY/$PACKAGE_NAME:$GITHUB_SHA
+        az webapp config container set --resource-group $RESOURCE_GROUP --name $WEBAPP_NAME --docker-registry-server-password $DOCKER_PASSWORD --docker-registry-server-user $DOCKER_USERNAME --docker-registry-server-url $DOCKER_REGISTRY_URL
+        az webapp update -g $RESOURCE_GROUP -n $WEBAPP_NAME --set tags.ref=$GITHUB_REF tags.type=review
+
+    - name: Deploy the container
+      uses: azure/webapps-container-deploy@v1
+      with:
+        app-name: ${{ env.WEBAPP_NAME }}
+        images: ${{ format('{0}/{1}/{2}:{3}', 'docker.pkg.github.com', github.repository, steps.package-name.outputs.package_name, github.sha) }}
+
+    - uses: octokit/request-action@v1.x
+      with:
+        route: POST /repos/:owner/:repo/deployments/:deployment_id/statuses
+        deployment_id: ${{ github.event.deployment.id }}
+        environment: ${{ github.event.deployment.environment }}
+        description: "Deployed in ${{ github.event.deployment.environment }}"
+        state: "success"
+        environment_url: "https://${{ env.WEBAPP_NAME }}.azurewebsites.net"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - uses: octokit/request-action@v1.x
+      if: failure()
+      with:
+        route: POST /repos/:owner/:repo/deployments/:deployment_id/statuses
+        deployment_id: ${{ github.event.deployment.id }}
+        description: "Deploy failed for ${{ github.event.deployment.environment }}"
+        environment: ${{ github.event.deployment.environment }}
+        state: "failure"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
